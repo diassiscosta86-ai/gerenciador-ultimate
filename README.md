@@ -312,6 +312,18 @@ geren-diassis-lima
                 <p id="winRateDisplay" class="mt-1 text-3xl font-bold text-blue-600">0.00%</p>
             </div>
         </div>
+        
+        <!-- Análise de Desempenho do Ciclo (NOVA SECÇÃO) -->
+        <div class="p-6 card border-l-4 border-pink-500">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">🧠 Análise de Desempenho do Ciclo (LLM)</h2>
+            <div id="cycleAnalysisOutput" class="p-3 mb-4 bg-gray-50 border border-gray-200 rounded-lg text-gray-600 dark:bg-gray-800 dark:text-gray-300 hidden">
+                <!-- Output da análise de desempenho aqui -->
+            </div>
+            <button onclick="analyzeCyclePerformance()" id="analyzeCycleButton"
+                    class="bg-pink-600 text-white font-medium py-2 px-4 rounded-lg shadow-md hover:bg-pink-700 hover:shadow-lg transition w-full sm:w-auto">
+                ✨ Análise de Ciclo W/L (Gemini Coach)
+            </button>
+        </div>
 
         <!-- Gráfico de Crescimento da Banca -->
         <div class="p-6 card">
@@ -401,7 +413,7 @@ geren-diassis-lima
         <!-- Secção de Adicionar Transação Manual (Aportes/Retiradas) -->
         <div class="p-6 card">
             <h2 class="text-xl font-semibold text-gray-800 mb-4">✍️ Adicionar Transação Manual (Aportes/Outros)</h2>
-            <div id="llmAnalysisOutput" class="p-3 mb-4 bg-gray-50 border border-gray-200 rounded-lg text-gray-600 hidden">
+            <div id="llmAnalysisOutput" class="p-3 mb-4 bg-gray-50 border border-gray-200 rounded-lg text-gray-600 dark:bg-gray-800 dark:text-gray-300 hidden">
                 <!-- Output da análise LLM aqui -->
             </div>
             <form id="transactionForm" class="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -439,10 +451,10 @@ geren-diassis-lima
         import { getFirestore, doc, setDoc, onSnapshot, updateDoc, arrayRemove, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Variáveis globais fornecidas pelo ambiente Canvas
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // Variáveis globais de ambiente (necessárias para o Canvas, mas ajustadas para ambientes públicos)
+        // Para ambiente público/GitHub Pages, estas variáveis serão null, forçando o signInAnonymously.
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'public-app-id'; 
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        // CORREÇÃO AQUI: Remove JSON.parse(), pois o token já é uma string
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
         
         // API Key para a API Gemini (deixada em branco para o ambiente Canvas)
@@ -533,39 +545,57 @@ geren-diassis-lima
 
         // Função principal de inicialização do Firebase e autenticação
         const initFirebase = async () => {
-            if (firebaseConfig) {
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
+            // Inicialização do Firebase (APENAS se a configuração estiver disponível)
+            if (!firebaseConfig) {
+                 console.warn("Aviso: Configuração do Firebase não encontrada. A aplicação irá tentar usar o login anónimo, mas não guardará dados de forma persistente no Canvas.");
+                 // Se não houver config, a aplicação irá funcionar sem salvar dados no Firestore
+                 isAuthReady = true;
+                 userId = crypto.randomUUID();
+                 const initialCurrency = document.getElementById('currencyInput').value;
+                 switchBankroll(initialCurrency, true); 
+                 initChart();
+                 return;
+            } 
+            
+            // Fluxo normal (Canvas)
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
 
-                // Autenticação
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        userId = user.uid;
-                    } else {
-                        // Se não houver usuário, tenta login com token ou anónimo
+
+            // Autenticação
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                } else {
+                    // Tenta login com token (Canvas) ou anónimo (Público/Canvas)
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            // Este é o fallback para GitHub Pages ou se o token expirar
+                            await signInAnonymously(auth); 
+                        }
+                        userId = auth.currentUser.uid;
+                    } catch (error) {
+                        console.error("Erro ao autenticar no Firebase. Tentando anónimo...", error);
+                        // Última tentativa de fallback: login anónimo
                         try {
-                            if (initialAuthToken) {
-                                await signInWithCustomToken(auth, initialAuthToken);
-                            } else {
-                                await signInAnonymously(auth);
-                            }
-                            userId = auth.currentUser.uid;
-                        } catch (error) {
-                            console.error("Erro ao autenticar no Firebase:", error);
-                            userId = crypto.randomUUID(); // Fallback para ID temporário
+                           await signInAnonymously(auth);
+                           userId = auth.currentUser.uid;
+                        } catch (e) {
+                           console.error("Falha na autenticação anónima.", e);
+                           userId = crypto.randomUUID(); // Fallback para ID temporário
                         }
                     }
+                }
 
-                    isAuthReady = true;
-                    // Inicializa com a moeda padrão (USD), lendo o seletor na UI
-                    const initialCurrency = document.getElementById('currencyInput').value;
-                    switchBankroll(initialCurrency, true); 
-                    initChart(); // Inicializa o gráfico
-                });
-            } else {
-                console.error("Configuração do Firebase não encontrada.");
-            }
+                isAuthReady = true;
+                // Inicializa com a moeda padrão (USD), lendo o seletor na UI
+                const initialCurrency = document.getElementById('currencyInput').value;
+                switchBankroll(initialCurrency, true); 
+                initChart(); // Inicializa o gráfico
+            });
         };
 
         // Troca o documento da banca para a moeda selecionada e carrega os dados
@@ -574,6 +604,13 @@ geren-diassis-lima
             
             // 1. Altera a moeda no estado local
             currentData.currency = newCurrency;
+
+            // Se o Firebase NÃO estiver inicializado (ambiente público sem config), não fazemos nada.
+            if (!db) {
+                renderUI();
+                updateChart();
+                return;
+            }
 
             // 2. Cancela a escuta anterior (CRUCIAL para multi-documento)
             if (unsubscribeSnapshot) {
@@ -672,7 +709,7 @@ geren-diassis-lima
 
         // Função para escutar as mudanças no Firestore em tempo real
         const listenForData = () => {
-            if (!isAuthReady || !trackerDocRef) return;
+            if (!isAuthReady || !trackerDocRef || !db) return;
             
             // Atribui a função de "unsubscribe"
             unsubscribeSnapshot = onSnapshot(trackerDocRef, (docSnap) => {
@@ -756,14 +793,13 @@ geren-diassis-lima
 
         // Reinicia o ciclo de Stop Loss/Win
         window.resetStopCycle = async () => {
-            if (!isAuthReady || !trackerDocRef) return;
+            if (!isAuthReady || !trackerDocRef || !db) return;
             
             // Obtém o timestamp do reinício
             const newCycleStartTimestamp = Date.now();
             
             try {
-                // Atualiza o stopCycleStart para o timestamp atual (reinicia SL/SW)
-                // Os campos cycleWins e cycleLosses são zerados implicitamente pelo novo timestamp
+                // Atualiza o stopCycleStart para o timestamp atual (reinicia SL/SW e W/L)
                 await updateDoc(trackerDocRef, {
                     stopCycleStart: newCycleStartTimestamp,
                 });
@@ -1009,7 +1045,7 @@ geren-diassis-lima
                 const resultColor = t.result >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold';
                 
                 // Determina a classe condicional para o valor INVESTIDO
-                // MANTÉM O FUNDO ROSA PARA GALE, MAS FORÇA A COR DO TEXTO PRETO/BRANCO
+                // CORREÇÃO: Aplicar text-black/dark:text-white APENAS para GALE, se o background estiver rosa/roxo
                 const investedHighlightClass = t.description.includes("Gale") 
                     ? 'bg-pink-100 text-black dark:text-white font-medium dark:bg-pink-900' 
                     : 'text-black dark:text-white'; 
@@ -1125,10 +1161,95 @@ geren-diassis-lima
             analyzeButton?.classList.remove('llm-loading');
             if(analyzeButton) analyzeButton.textContent = '✨ Análise de Risco LLM';
         };
+        
+        // Função para chamar a API Gemini e analisar o desempenho do ciclo
+        window.analyzeCyclePerformance = async () => {
+            const currentBankroll = window.currentBankrollValue;
+            const winCount = document.getElementById('winCountDisplay').textContent;
+            const lossCount = document.getElementById('lossCountDisplay').textContent;
+            const winRate = document.getElementById('winRateDisplay').textContent;
+
+            const outputDiv = document.getElementById('cycleAnalysisOutput');
+            const analyzeButton = document.getElementById('analyzeCycleButton');
+
+            if (currentBankroll <= 0) {
+                outputDiv?.classList.remove('hidden');
+                outputDiv.innerHTML = `<p class="text-red-600">⚠️ Erro: Por favor, defina a Banca Inicial para calcular o desempenho.</p>`;
+                return;
+            }
+
+            analyzeButton?.classList.add('llm-loading');
+            if(analyzeButton) analyzeButton.textContent = 'A Analisar Desempenho...';
+            outputDiv?.classList.add('hidden');
+            if(outputDiv) outputDiv.innerHTML = '';
+
+            // Determina o símbolo correto para o prompt
+            let currencySymbol = currentData.currency === 'BRL' ? 'R$' : (currentData.currency === 'EUR' ? '€' : '$');
+            
+            // 1. Construir o Prompt para o LLM (Coach de Desempenho)
+            const prompt = `
+                Como um coach de gestão de capital, analise o desempenho do ciclo de operações atual.
+                
+                - Banca Atual: ${currencySymbol} ${currentBankroll.toFixed(2)}
+                - Total de Vitórias (W): ${winCount}
+                - Total de Derrotas (L): ${lossCount}
+                - Taxa de Acerto (Win Rate): ${winRate}
+
+                Forneça um feedback motivacional e uma avaliação da disciplina.
+                1. Comente sobre o Win Rate e W/L.
+                2. Sugira manter ou ajustar o foco na disciplina.
+                3. Use um tom de coach positivo (máximo 4 frases) em português de Portugal.
+            `;
+            
+            // 2. Configurar a chamada da API
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                systemInstruction: {
+                    parts: [{ text: "Você é um coach de gestão de capital, motivacional e focado na disciplina. Suas respostas devem ser limitadas a 4 frases." }]
+                },
+            };
+
+            const maxRetries = 3;
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Erro HTTP: ${response.status}`);
+                    }
+
+                    const resultJson = await response.json();
+                    const generatedText = resultJson.candidates?.[0]?.content?.parts?.[0]?.text || "Erro: Não foi possível obter a análise de desempenho.";
+
+                    // 3. Exibir o resultado na UI
+                    if(outputDiv) outputDiv.innerHTML = `<p class="font-bold text-gray-800 dark:text-white">Análise de Ciclo (Gemini Coach):</p><p>${generatedText}</p>`;
+                    outputDiv?.classList.remove('hidden');
+                    break; // Sai do loop se for bem-sucedido
+
+                } catch (error) {
+                    console.error(`Erro na chamada LLM (Tentativa ${i + 1}):`, error);
+                    if (i < maxRetries - 1) {
+                        await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+                    } else {
+                        if(outputDiv) outputDiv.innerHTML = `<p class="text-red-600">❌ Erro na API Gemini: Não foi possível realizar a análise após ${maxRetries} tentativas.</p>`;
+                        outputDiv?.classList.remove('hidden');
+                    }
+                }
+            }
+            
+            // 4. Resetar o botão
+            analyzeButton?.classList.remove('llm-loading');
+            if(analyzeButton) analyzeButton.textContent = '✨ Análise de Ciclo W/L (Gemini Coach)';
+        };
+
 
         // Atualiza as configurações de porcentagem ou moeda no Firestore
         window.updateSettings = async (settingKey, value) => {
-            if (!isAuthReady || !trackerDocRef) return;
+            if (!isAuthReady || !trackerDocRef || !db) return;
 
             // Se for moeda, ela já foi trocada pelo switchBankroll
             if (settingKey === 'currency') return; 
@@ -1170,7 +1291,7 @@ geren-diassis-lima
 
         // Atualiza a Banca Inicial no Firestore
         window.updateInitialBankroll = async (value) => {
-            if (!isAuthReady || !trackerDocRef) return;
+            if (!isAuthReady || !trackerDocRef || !db) return;
 
             const newBankroll = parseFloat(value);
             if (isNaN(newBankroll) || newBankroll < 0) return;
@@ -1194,7 +1315,7 @@ geren-diassis-lima
 
         // Regista uma transação automática baseada na Unidade
         window.registerAutoTransaction = async (isWin, strategyLevel) => {
-            if (!isAuthReady || !trackerDocRef) return;
+            if (!isAuthReady || !trackerDocRef || !db) return;
             
             const initialInput = document.getElementById('initialBankrollInput');
             let bankrollToCheck = currentData.initialBankroll;
@@ -1269,9 +1390,8 @@ geren-diassis-lima
                 
                 // 2.3 Determina o Resultado
                 if (isWin) {
-                    // RESULTADO FINAL: Perdas Acumuladas + Lucro Padrão
-                    // Isto garante que o saldo líquido seja o lucro da unidade padrão após cobrir perdas.
-                    result = accumulatedLoss + standardProfit; 
+                    // CORREÇÃO FINAL: Resultado no histórico = Lucro Padrão + Perdas Acumuladas (para compensar)
+                    result = standardProfit + accumulatedLoss; 
                     
                     description = `✅ Vitória (Gale ${strategyLevel}) (Líquido: ${formatCurrency(standardProfit)})`;
                     
@@ -1319,7 +1439,7 @@ geren-diassis-lima
 
         // Função para eliminar uma transação
         window.deleteTransaction = async (timestamp, result, investedAmount) => {
-            if (!isAuthReady || !trackerDocRef) return;
+            if (!isAuthReady || !trackerDocRef || !db) return;
 
             const transactionToDelete = currentData.transactions.find(t => 
                 t.timestamp === timestamp && 
@@ -1346,7 +1466,7 @@ geren-diassis-lima
         // Adiciona uma nova transação manual ao Firestore (Aportes/Outras)
         document.getElementById('transactionForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            if (!isAuthReady || !trackerDocRef) return;
+            if (!isAuthReady || !trackerDocRef || !db) return;
 
             const description = document.getElementById('description').value;
             const investedAmount = parseFloat(document.getElementById('invested').value);
@@ -1385,3 +1505,6 @@ geren-diassis-lima
 
         // Inicia o aplicativo Firebase
         window.onload = initFirebase;
+
+    </script>
+}
