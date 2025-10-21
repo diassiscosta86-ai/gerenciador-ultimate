@@ -1385,6 +1385,3 @@ geren-diassis-lima
 
         // Inicia o aplicativo Firebase
         window.onload = initFirebase;
-
-    </script>
-}
